@@ -79,36 +79,9 @@ log_info "Creating menu bar..."
 # First, ensure no existing instance is running
 pkill -f "MindfulAccessMenu" 2>/dev/null
 
-# Set up paths for the menu helper app
-MENU_HELPER_SRC="$MINDFULACCESS_ROOT/src/ui/menu_helper.swift"
-MENU_HELPER_MAIN="$MINDFULACCESS_ROOT/src/ui/main.swift"
-MENU_HELPER_PLIST="$MINDFULACCESS_ROOT/src/ui/menu_helper.plist"
-MENU_HELPER_APP="/tmp/MindfulAccessMenu.app"
-MENU_HELPER_CONTENTS="$MENU_HELPER_APP/Contents"
-MENU_HELPER_MACOS="$MENU_HELPER_CONTENTS/MacOS"
-MENU_HELPER_RESOURCES="$MENU_HELPER_CONTENTS/Resources"
-
-# Create app bundle structure
-log_info "Creating menu helper app bundle..."
-rm -rf "$MENU_HELPER_APP"
-mkdir -p "$MENU_HELPER_MACOS" "$MENU_HELPER_RESOURCES"
-
-# Copy Info.plist
-cp "$MENU_HELPER_PLIST" "$MENU_HELPER_CONTENTS/Info.plist"
-
-# Compile the Swift helper
-log_info "Compiling menu helper..."
-if ! swiftc -sdk $(xcrun --show-sdk-path) -target x86_64-apple-macosx10.14 "$MENU_HELPER_SRC" "$MENU_HELPER_MAIN" -o "$MENU_HELPER_MACOS/MindfulAccessMenu"; then
-    log_error "Failed to compile menu helper"
-    exit 1
-fi
-
-# Make it executable
-chmod +x "$MENU_HELPER_MACOS/MindfulAccessMenu"
-
-# Run the menu helper app
+# Run the menu helper
 log_info "Launching menu helper..."
-open "$MENU_HELPER_APP"
+"$MINDFULACCESS_ROOT/bin/MindfulAccessMenu" &
 
 # Wait for the menu helper to start
 sleep 2
@@ -127,7 +100,7 @@ while pgrep -f "app_protector.sh --run" > /dev/null; do
         RESTART_COUNT=$((RESTART_COUNT + 1))
         if [ $RESTART_COUNT -le $MAX_RESTARTS ]; then
             log_error "Menu helper died, restarting (attempt $RESTART_COUNT of $MAX_RESTARTS)..."
-            open "$MENU_HELPER_APP"
+            "$MINDFULACCESS_ROOT/bin/MindfulAccessMenu" &
             sleep 2
         else
             log_error "Menu helper failed to start after $MAX_RESTARTS attempts. Exiting..."
@@ -141,6 +114,5 @@ done
 
 log_info "=== MindfulAccess Exiting ==="
 # Clean up
-rm -rf "$MENU_HELPER_APP"
 pkill -f "MindfulAccessMenu"
 pkill -f "app_protector.sh --run" 

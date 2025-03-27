@@ -96,6 +96,28 @@ copy_project_files() {
     fi
 }
 
+# Compile menu helper
+compile_menu_helper() {
+    log_info "Compiling menu helper..."
+    local menu_helper_src="$PROJECT_ROOT/src/ui/menu_helper.swift"
+    local menu_helper_bin="$APP_PATH/Contents/Resources/bin/MindfulAccessMenu"
+    
+    # Create bin directory if it doesn't exist
+    mkdir -p "$(dirname "$menu_helper_bin")"
+    
+    # Compile the Swift code
+    if ! swiftc -o "$menu_helper_bin" "$menu_helper_src"; then
+        log_error "Failed to compile menu helper"
+        return 1
+    fi
+    
+    # Make it executable
+    chmod +x "$menu_helper_bin"
+    
+    log_info "Menu helper compiled successfully"
+    return 0
+}
+
 # Create DMG
 create_dmg() {
     log_info "Creating DMG..."
@@ -132,6 +154,9 @@ main() {
     
     # Copy files
     copy_project_files
+    
+    # Compile menu helper
+    compile_menu_helper || exit 1
     
     # Create DMG
     create_dmg
