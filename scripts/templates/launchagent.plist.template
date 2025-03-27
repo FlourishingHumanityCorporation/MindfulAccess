@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{APP_IDENTIFIER}}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/{{APP_NAME}}.app/Contents/MacOS/{{APP_NAME}}</string>
+        <string>--run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/{{APP_NAME}}.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/{{APP_NAME}}.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>MINDFULACCESS_ROOT</key>
+        <string>/Applications/{{APP_NAME}}.app/Contents/Resources</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist> 

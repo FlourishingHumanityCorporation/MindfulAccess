@@ -1,0 +1,146 @@
+#!/bin/bash
+
+# Get the absolute path to the app bundle
+APP_BUNDLE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export MINDFULACCESS_ROOT="$APP_BUNDLE_ROOT/Resources"
+
+# Error logging
+log_error() {
+    local msg="$1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $msg" >> "/tmp/mindfulaccess.log"
+}
+
+# Info logging
+log_info() {
+    local msg="$1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] INFO: $msg" >> "/tmp/mindfulaccess.log"
+}
+
+# Debug logging
+log_debug() {
+    local msg="$1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] DEBUG: $msg" >> "/tmp/mindfulaccess.log"
+}
+
+# Check and request permissions
+check_permissions() {
+    log_info "Checking accessibility permissions..."
+    if ! osascript -e 'tell application "System Events" to get name of every process' >/dev/null 2>&1; then
+        log_error "Missing accessibility permissions"
+        osascript -e 'display dialog "MindfulAccess needs accessibility permissions to show its menu bar icon. Please enable in System Preferences → Security & Privacy → Privacy → Accessibility." buttons {"Open Settings", "Cancel"} default button 1 with icon caution'
+        open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        return 1
+    fi
+    log_info "Accessibility permissions granted"
+    return 0
+}
+
+# Handle menu bar actions
+handle_menu_action() {
+    local action="$1"
+    case "$action" in
+        "Configure")
+            "$MINDFULACCESS_ROOT/src/core/app_protector.sh" --config
+            ;;
+        "Quit")
+            pkill -f "app_protector.sh --run"
+            exit 0
+            ;;
+    esac
+}
+
+# Log startup information
+log_info "=== MindfulAccess Starting ==="
+log_info "App Bundle Root: $APP_BUNDLE_ROOT"
+log_info "Resources Path: $MINDFULACCESS_ROOT"
+
+# Start the service if not running
+if ! pgrep -f "app_protector.sh --run" > /dev/null; then
+    log_info "Starting app protector service..."
+    "$MINDFULACCESS_ROOT/src/core/app_protector.sh" --run &
+    sleep 1
+    if pgrep -f "app_protector.sh --run" > /dev/null; then
+        log_info "App protector service started successfully"
+    else
+        log_error "Failed to start app protector service"
+    fi
+fi
+
+# Check permissions before proceeding
+log_info "Checking permissions..."
+check_permissions || {
+    log_error "Permission check failed, exiting"
+    exit 1
+}
+
+# Create and monitor menu bar
+log_info "Creating menu bar..."
+
+# First, ensure no existing instance is running
+pkill -f "MindfulAccessMenu" 2>/dev/null
+
+# Set up paths for the menu helper app
+MENU_HELPER_SRC="$MINDFULACCESS_ROOT/src/ui/menu_helper.swift"
+MENU_HELPER_MAIN="$MINDFULACCESS_ROOT/src/ui/main.swift"
+MENU_HELPER_PLIST="$MINDFULACCESS_ROOT/src/ui/menu_helper.plist"
+MENU_HELPER_APP="/tmp/MindfulAccessMenu.app"
+MENU_HELPER_CONTENTS="$MENU_HELPER_APP/Contents"
+MENU_HELPER_MACOS="$MENU_HELPER_CONTENTS/MacOS"
+MENU_HELPER_RESOURCES="$MENU_HELPER_CONTENTS/Resources"
+
+# Create app bundle structure
+log_info "Creating menu helper app bundle..."
+rm -rf "$MENU_HELPER_APP"
+mkdir -p "$MENU_HELPER_MACOS" "$MENU_HELPER_RESOURCES"
+
+# Copy Info.plist
+cp "$MENU_HELPER_PLIST" "$MENU_HELPER_CONTENTS/Info.plist"
+
+# Compile the Swift helper
+log_info "Compiling menu helper..."
+if ! swiftc -sdk $(xcrun --show-sdk-path) -target x86_64-apple-macosx10.14 "$MENU_HELPER_SRC" "$MENU_HELPER_MAIN" -o "$MENU_HELPER_MACOS/MindfulAccessMenu"; then
+    log_error "Failed to compile menu helper"
+    exit 1
+fi
+
+# Make it executable
+chmod +x "$MENU_HELPER_MACOS/MindfulAccessMenu"
+
+# Run the menu helper app
+log_info "Launching menu helper..."
+open "$MENU_HELPER_APP"
+
+# Wait for the menu helper to start
+sleep 2
+if pgrep -f "MindfulAccessMenu" > /dev/null; then
+    log_info "Menu helper started successfully"
+else
+    log_error "Failed to start menu helper"
+fi
+
+# Keep the app running and monitor the menu helper
+RESTART_COUNT=0
+MAX_RESTARTS=5
+while pgrep -f "app_protector.sh --run" > /dev/null; do
+    # Verify menu helper is still running
+    if ! pgrep -f "MindfulAccessMenu" > /dev/null; then
+        RESTART_COUNT=$((RESTART_COUNT + 1))
+        if [ $RESTART_COUNT -le $MAX_RESTARTS ]; then
+            log_error "Menu helper died, restarting (attempt $RESTART_COUNT of $MAX_RESTARTS)..."
+            open "$MENU_HELPER_APP"
+            sleep 2
+        else
+            log_error "Menu helper failed to start after $MAX_RESTARTS attempts. Exiting..."
+            break
+        fi
+    else
+        RESTART_COUNT=0  # Reset counter if helper is running
+    fi
+    sleep 2
+done
+
+log_info "=== MindfulAccess Exiting ==="
+# Clean up
+rm -rf "$MENU_HELPER_APP"
+pkill -f "MindfulAccessMenu"
+pkill -f "app_protector.sh --run" 

@@ -1,0 +1,144 @@
+#!/bin/bash
+
+# Configuration
+APP_NAME="{{APP_NAME}}"
+APP_IDENTIFIER="{{APP_IDENTIFIER}}"
+APP_VERSION="{{APP_VERSION}}"
+
+# Get the directory of this script
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Source common utilities
+source "$SCRIPT_DIR/utils.sh"
+
+# Logging
+log_info() {
+    echo "[INFO] $1"
+}
+
+log_error() {
+    echo "[ERROR] $1" >&2
+}
+
+log_debug() {
+    if [ "${DEBUG:-false}" = "true" ]; then
+        echo "[DEBUG] $1"
+    fi
+}
+
+# Check system requirements
+check_requirements() {
+    log_info "Checking system requirements..."
+    check_macos_version "10.14" || return 1
+    check_disk_space 100 "/Applications" || return 1
+    return 0
+}
+
+# Check if app is already running
+check_running() {
+    if pgrep -f "app_protector.sh --run" > /dev/null; then
+        log_info "Stopping existing MindfulAccess instance..."
+        pkill -f "app_protector.sh --run"
+        sleep 1
+    fi
+}
+
+# Backup existing installation
+backup_existing() {
+    if [ -d "/Applications/$APP_NAME.app" ]; then
+        local backup_dir
+        backup_dir=$(get_backup_dir)
+        local backup_name="$APP_NAME-backup-$(date +%Y%m%d_%H%M%S).tar.gz"
+        create_backup "/Applications/$APP_NAME.app" "$backup_dir" "$backup_name" || return 1
+    fi
+    return 0
+}
+
+# Install app to Applications folder
+install_app() {
+    log_info "Installing $APP_NAME..."
+    
+    # Remove existing installation
+    if [ -d "/Applications/$APP_NAME.app" ]; then
+        log_info "Removing existing installation..."
+        safe_remove "/Applications/$APP_NAME.app" true || return 1
+    fi
+    
+    # Copy new app bundle
+    if ! sudo cp -r "$(dirname "$(dirname "$SCRIPT_DIR")")" "/Applications/"; then
+        handle_error "Failed to copy app to Applications folder"
+        return 1
+    fi
+    
+    # Set permissions
+    sudo chown -R root:wheel "/Applications/$APP_NAME.app"
+    sudo chmod -R 755 "/Applications/$APP_NAME.app"
+    
+    # Validate installation
+    validate_app_bundle "/Applications/$APP_NAME.app" || return 1
+    
+    return 0
+}
+
+# Install launch agent
+install_launch_agent() {
+    log_info "Installing launch agent..."
+    local launch_agent_path
+    launch_agent_path=$(get_launch_agent_path)
+    local launch_agents_dir
+    launch_agents_dir=$(dirname "$launch_agent_path")
+    
+    ensure_dir "$launch_agents_dir" || return 1
+    
+    if ! cp "$SCRIPT_DIR/LaunchAgents/$APP_IDENTIFIER.plist" "$launch_agent_path"; then
+        handle_error "Failed to copy launch agent"
+        return 1
+    fi
+    
+    launchctl unload "$launch_agent_path" 2>/dev/null
+    if ! launchctl load "$launch_agent_path"; then
+        handle_error "Failed to load launch agent"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Create necessary directories and set permissions
+setup_directories() {
+    log_info "Setting up directories..."
+    while IFS= read -r dir; do
+        [[ -z "$dir" ]] && continue
+        ensure_dir "$dir" 700 || return 1
+    done < <(get_config_paths)
+}
+
+# Main installation process
+main() {
+    log_info "Starting installation of $APP_NAME v$APP_VERSION..."
+    
+    # Check requirements first
+    check_requirements || exit 1
+    
+    # Stop running instance
+    check_process "app_protector.sh --run"
+    
+    # Backup existing installation
+    backup_existing || exit 1
+    
+    # Install components
+    install_app || exit 1
+    install_launch_agent || exit 1
+    setup_directories || exit 1
+    
+    log_info "Installation complete! $APP_NAME will start automatically on login."
+    log_info "You can find logs in /tmp/mindfulaccess.log"
+    
+    # Request accessibility permissions if needed
+    if ! check_accessibility_permissions; then
+        request_accessibility_permissions
+    fi
+}
+
+# Run main function
+main 

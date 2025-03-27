@@ -1,0 +1,230 @@
+#!/bin/bash
+
+# Common utilities for MindfulAccess scripts
+
+# Configuration
+APP_NAME="{{APP_NAME}}"
+APP_IDENTIFIER="{{APP_IDENTIFIER}}"
+APP_VERSION="{{APP_VERSION}}"
+
+# Global settings
+DEBUG="${DEBUG:-false}"
+DRY_RUN="${DRY_RUN:-false}"
+
+# Logging functions
+log_info() {
+    echo "[INFO] $1"
+}
+
+log_error() {
+    echo "[ERROR] $1" >&2
+}
+
+log_debug() {
+    if [ "$DEBUG" = "true" ]; then
+        echo "[DEBUG] $1"
+    fi
+}
+
+log_warning() {
+    echo "[WARNING] $1" >&2
+}
+
+# Process management
+check_process() {
+    local pattern="$1"
+    local action="${2:-stop}"  # stop or check
+    
+    if pgrep -f "$pattern" > /dev/null; then
+        if [ "$action" = "stop" ]; then
+            log_info "Stopping process matching: $pattern"
+            pkill -f "$pattern"
+            sleep 1
+            if pgrep -f "$pattern" > /dev/null; then
+                log_warning "Process still running, attempting force kill..."
+                pkill -9 -f "$pattern"
+                sleep 1
+            fi
+        fi
+        return 0
+    fi
+    return 1
+}
+
+# File operations
+ensure_dir() {
+    local dir="$1"
+    local perms="${2:-755}"
+    local owner="${3:-}"
+    
+    if [ "$DRY_RUN" = "true" ]; then
+        log_info "[DRY RUN] Would create directory: $dir"
+        return 0
+    fi
+    
+    if ! mkdir -p "$dir"; then
+        handle_error "Failed to create directory: $dir"
+        return 1
+    fi
+    
+    if ! chmod "$perms" "$dir"; then
+        handle_error "Failed to set permissions on: $dir"
+        return 1
+    fi
+    
+    if [ -n "$owner" ]; then
+        if ! chown "$owner" "$dir"; then
+            handle_error "Failed to set owner on: $dir"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+safe_remove() {
+    local path="$1"
+    local sudo_rm="${2:-false}"
+    
+    if [ "$DRY_RUN" = "true" ]; then
+        log_info "[DRY RUN] Would remove: $path"
+        return 0
+    fi
+    
+    if [ ! -e "$path" ]; then
+        log_debug "Path does not exist (already removed): $path"
+        return 0
+    fi
+    
+    local rm_cmd="rm -rf"
+    if [ "$sudo_rm" = "true" ]; then
+        rm_cmd="sudo rm -rf"
+    fi
+    
+    if ! $rm_cmd "$path"; then
+        handle_error "Failed to remove: $path"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Error handling
+handle_error() {
+    local msg="$1"
+    local exit_code="${2:-1}"
+    log_error "$msg"
+    return "$exit_code"
+}
+
+# System checks
+check_macos_version() {
+    local min_version="$1"
+    local os_version
+    os_version=$(sw_vers -productVersion)
+    if [[ "$os_version" < "$min_version" ]]; then
+        handle_error "macOS $min_version or higher required (found $os_version)"
+        return 1
+    fi
+    return 0
+}
+
+check_disk_space() {
+    local required_mb="$1"
+    local path="$2"
+    local free_space
+    
+    if ! free_space=$(df -m "$path" | tail -1 | awk '{print $4}'); then
+        handle_error "Failed to check disk space for: $path"
+        return 1
+    fi
+    
+    if [ "$free_space" -lt "$required_mb" ]; then
+        handle_error "Insufficient disk space: need ${required_mb}MB, have ${free_space}MB"
+        return 1
+    fi
+    return 0
+}
+
+# Common paths
+get_launch_agent_path() {
+    echo "$HOME/Library/LaunchAgents/$APP_IDENTIFIER.plist"
+}
+
+get_config_paths() {
+    cat << EOF
+$HOME/.config/mindfulaccess
+$HOME/.local/share/mindfulaccess
+/tmp/mindfulaccess.log
+/tmp/mindfulaccess_launch.log
+EOF
+}
+
+get_backup_dir() {
+    echo "$HOME/Library/Application Support/$APP_NAME/backup"
+}
+
+# Permission handling
+check_accessibility_permissions() {
+    if ! osascript -e 'tell application "System Events" to get name of every process' >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+request_accessibility_permissions() {
+    if [ "$DRY_RUN" = "true" ]; then
+        log_info "[DRY RUN] Would request accessibility permissions"
+        return 0
+    fi
+    
+    osascript -e 'display dialog "MindfulAccess needs accessibility permissions to show its menu bar icon. Please enable in System Preferences → Security & Privacy → Privacy → Accessibility." buttons {"Open Settings", "Cancel"} default button 1 with icon caution'
+    open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+}
+
+# Backup functionality
+create_backup() {
+    local source="$1"
+    local backup_dir="$2"
+    local backup_name="$3"
+    
+    if [ "$DRY_RUN" = "true" ]; then
+        log_info "[DRY RUN] Would backup $source to $backup_dir/$backup_name"
+        return 0
+    fi
+    
+    ensure_dir "$backup_dir" || return 1
+    
+    if ! tar -czf "$backup_dir/$backup_name" -C "$(dirname "$source")" "$(basename "$source")" 2>/dev/null; then
+        handle_error "Failed to create backup: $backup_dir/$backup_name"
+        return 1
+    fi
+    
+    log_info "Backup created: $backup_dir/$backup_name"
+    return 0
+}
+
+# Validation
+validate_app_bundle() {
+    local app_path="$1"
+    
+    if [ ! -d "$app_path" ]; then
+        handle_error "App bundle not found: $app_path"
+        return 1
+    fi
+    
+    local required_paths=(
+        "Contents/Info.plist"
+        "Contents/MacOS/$APP_NAME"
+        "Contents/Resources"
+    )
+    
+    for path in "${required_paths[@]}"; do
+        if [ ! -e "$app_path/$path" ]; then
+            handle_error "Missing required component: $path"
+            return 1
+        fi
+    done
+    
+    return 0
+} 
